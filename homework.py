@@ -2,6 +2,7 @@ import logging
 
 import os
 
+from http import HTTPStatus
 import requests
 from dotenv import load_dotenv
 from telegram import Bot
@@ -9,13 +10,9 @@ import time
 
 load_dotenv()
 
-secret_practicum_token = os.getenv('PRACTICUM_TOKEN')
-secret_telegram_token = os.getenv('TELEGRAM_TOKEN')
-secret_chat_id = os.getenv('CHAT_ID')
-
-PRACTICUM_TOKEN = secret_practicum_token
-TELEGRAM_TOKEN = secret_telegram_token
-CHAT_ID = secret_chat_id
+PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+CHAT_ID = os.getenv('CHAT_ID')
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -40,22 +37,22 @@ HOMEWORK_STATUSES = {
 
 def IsRequiredVariables():
     """Эта функция проверяет обязательные переменнные."""
-    try:
-        if PRACTICUM_TOKEN is not None and TELEGRAM_TOKEN is not None:
-            if CHAT_ID is not None and RETRY_TIME is not None:
-                if ENDPOINT is not None:
-                    return 0
-        logger.critical("Your required varieble is None")
-    except NameError as error:
-        logger.critical(f"You haven't required varieble: {error}")
+    message = 'Program stoped, because required variable is missing'
+    if PRACTICUM_TOKEN is None:
+        logger.critical(f'{message} PRACTICUM TOKEN')
+    if TELEGRAM_TOKEN is None:
+        logger.critical(f'{message} TELEGRAM TOKEN')
+    if CHAT_ID is None:
+        logger.critical(f'{message} CHAT_ID')
 
 
-def ResponseIsNot200(response):
-    """Функция для обработки недоступного ENDPOINT."""
-    status_code = response.status_code
-    message = f'Status code your ENDPOINT is {status_code}'
-    logger.error(message)
+def TheAnswerIsNot200Error(message):
+    """Функция обрабатывает статус неравный 200."""
     return message
+
+
+class RequestExceptionError(Exception):
+    """Функция для обработки недоступного ENDPOINT."""
 
 
 def send_message(bot, message):
@@ -71,25 +68,32 @@ def get_api_answer(url, current_timestamp):
     """Эта функция делает запрос к API практикума."""
     headers = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
     payload = {'from_date': current_timestamp}
-    response = requests.get(
-        url, headers=headers, params=payload
-    )
-    if response.status_code != 200:
-        return ResponseIsNot200(response)
-    response = response.json()
-    return check_response(response)
+    try:
+        response = requests.get(
+            url, headers=headers, params=payload
+        )
+        if response.status_code != HTTPStatus.OK:
+            message = (
+                f'Endpoint {url} is not available.'
+                f"API response code is {response.status_code}"
+            )
+            logger.error(message)
+            raise TheAnswerIsNot200Error(message)
+        return response.json()
+    except requests.exceptions.RequestException as request_error:
+        message = (f'API response code is {request_error}')
+        logger.error(message)
+        raise RequestExceptionError(message)
 
 
 def parse_status(homework):
     """Эта функция оповещает об изменение статуса."""
-    if homework in HOMEWORK_STATUSES:
-        verdict = HOMEWORK_STATUSES[homework]
-        homework_name = homework
-        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
-    else:
-        message = f'Your status({homework}) is unknown'
-        logger.error(message)
-        return message
+    homework_status = homework.get('status')
+    verdict = HOMEWORK_STATUSES[homework_status]
+    homework_name = homework.get("homework_name")
+    if homework_name is None or verdict is None:
+        raise Exception("Invalid results")
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def check_response(response):
@@ -99,10 +103,8 @@ def check_response(response):
         logger.error(message)
         return message
     homeworks = response.get('homeworks')
-    print(homeworks)
     if homeworks != []:
-        status = homeworks[0].get('status')
-        return parse_status(status)
+        return parse_status(response.get('homeworks')[0])
     return None
 
 
@@ -114,7 +116,8 @@ def main():
     url = ENDPOINT
     while True:
         try:
-            message = get_api_answer(url, current_timestamp)
+            response = get_api_answer(url, current_timestamp)
+            message = check_response(response)
             if message is not None:
                 send_message(bot, message)
             time.sleep(RETRY_TIME)
