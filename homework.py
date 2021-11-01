@@ -36,20 +36,20 @@ HOMEWORK_STATUSES = {
 def is_required_variables():
     """Эта функция проверяет обязательные переменнные."""
     message = "Program stoped, because required variable is missing"
-    stop_program = 0
+    stop_program = False
     if PRACTICUM_TOKEN is None:
         logger.critical(f"{message} PRACTICUM TOKEN")
-        stop_program = 1
+        stop_program = True
     if TELEGRAM_TOKEN is None:
         logger.critical(f"{message} TELEGRAM TOKEN")
-        stop_program = 1
+        stop_program = True
     if CHAT_ID is None:
         logger.critical(f"{message} CHAT_ID")
-        stop_program = 1
+        stop_program = True
     return stop_program
 
 
-class RequestException(Exception):
+class EndpointIsNotAvaileble(Exception):
     """Функция для обработки недоступного ENDPOINT."""
 
 
@@ -75,7 +75,7 @@ def get_api_answer(url, current_timestamp):
     except requests.exceptions.RequestException as request_error:
         message = f"API response code is {request_error}"
         logger.error(message)
-        raise RequestException(message)
+        raise EndpointIsNotAvaileble(message)
     if response.status_code != HTTPStatus.OK:
         message = (
             f"Endpoint {url} is not available."
@@ -91,7 +91,7 @@ def parse_status(homework):
     homework_status = homework.get("status")
     verdict = HOMEWORK_STATUSES[homework_status]
     homework_name = homework.get("homework_name")
-    if homework_name is None or verdict is None:
+    if homework_name is None:
         raise TGBotException("Invalid results")
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
@@ -103,7 +103,7 @@ def check_response(response):
         logger.error(message)
         return message
     homeworks = response.get("homeworks")
-    if homeworks != []:
+    if len(homeworks) > 0 and type(homeworks) == list:
         return parse_status(response.get("homeworks")[0])
     return None
 
@@ -111,7 +111,7 @@ def check_response(response):
 def main():
     """Функция служебного кода."""
     stop_program = is_required_variables()
-    if stop_program == 1:
+    if stop_program:
         raise TGBotException("Одна из обязательных переменных отсутствует")
     bot = Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
@@ -122,12 +122,11 @@ def main():
             message = check_response(response)
             if message is not None:
                 send_message(bot, message)
-            time.sleep(RETRY_TIME)
-            current_timestamp = int(time.time() - RETRY_TIME)
         except Exception as error:
             message = f"Сбой в работе программы: {error}"
             send_message(bot, message)
             logger.error(message)
+        finally:
             time.sleep(RETRY_TIME)
             current_timestamp = int(time.time() - RETRY_TIME)
 
